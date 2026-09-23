@@ -1,0 +1,56 @@
+name: Owned Pages artifact boundary probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.own_deploy.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package only the owned synthetic page
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: .
+      - name: Ask Pages to deploy a foreign owned-repository artifact
+        id: foreign_probe
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          oidc="$(curl -fsS \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}" | jq -r .value)"
+          test -n "$oidc" && test "$oidc" != "null"
+          jq -n \
+            --arg oidc "$oidc" \
+            --arg version "$GITHUB_SHA" \
+            --argjson artifact_id 10750302140 \
+            '{artifact_id:$artifact_id,pages_build_version:$version,oidc_token:$oidc}' > request.json
+          status="$(curl --silent --show-error \
+            --output response.json \
+            --write-out '%{http_code}' \
+            --request POST \
+            --header 'Accept: application/vnd.github+json' \
+            --header "Authorization: Bearer ${GITHUB_TOKEN}" \
+            --header 'X-GitHub-Api-Version: 2026-03-10' \
+            --header 'Content-Type: application/json' \
+            --data-binary @request.json \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/pages/deployments")"
+          rm -f request.json
+          printf 'FOREIGN_ARTIFACT_HTTP_STATUS=%s\n' "$status"
+          jq -c '{message,documentation_url,status,id,page_url}' response.json
+          echo "status=$status" >> "$GITHUB_OUTPUT"
+      - name: Establish Pages deployment with the local artifact
+        if: steps.foreign_probe.outputs.status != '200'
+        id: own_deploy
+        uses: actions/deploy-pages@v5
