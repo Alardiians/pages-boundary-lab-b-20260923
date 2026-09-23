@@ -7,7 +7,7 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  contents: write
 
 jobs:
   consume:
@@ -48,6 +48,7 @@ jobs:
         shell: bash
         env:
           DOT_DUMMY_SECRET: ${{ secrets.DOT_DUMMY_SECRET }}
+          H019_WRITE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           printf 'FINAL_SCRIPT_SHA256='; sha256sum scripts/verify.sh | cut -d' ' -f1
           bash scripts/verify.sh
