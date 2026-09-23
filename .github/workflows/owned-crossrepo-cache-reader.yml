@@ -1,0 +1,32 @@
+name: Owned public cache boundary reader
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  read:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Attempt exact-key cache restore from owned public repository
+        id: restore
+        uses: actions/cache/restore@v6
+        with:
+          path: probe/cache.txt
+          key: owned-crossrepo-cache-26ef258f919745f4b479e784b33e2f06
+          fail-on-cache-miss: false
+      - name: Compare only the synthetic canary digest
+        run: |
+          printf 'CACHE_HIT=%s\n' '${{ steps.restore.outputs.cache-hit }}'
+          if test -f probe/cache.txt; then
+            actual="$(sha256sum probe/cache.txt | awk '{print $1}')"
+            printf 'RESTORED_SHA256=%s\n' "$actual"
+            if test "$actual" = '52340bda99640eb900665194fac8cd353e82428e6a006fa70f492b162c31d4a5'; then
+              printf 'SYNTHETIC_PRIVATE_CANARY_MATCH=true\n'
+            else
+              printf 'SYNTHETIC_PRIVATE_CANARY_MATCH=false\n'
+            fi
+          else
+            printf 'SYNTHETIC_PRIVATE_CANARY_MATCH=false\n'
+          fi
