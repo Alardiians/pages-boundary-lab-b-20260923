@@ -1,0 +1,62 @@
+name: Owned private check metadata ACL probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  checks: read
+  contents: read
+
+jobs:
+  bounded_check_acl:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compare exact owned public and private check objects
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          probe() {
+            label="$1"
+            url="$2"
+            mode="$3"
+            headers="$(mktemp)"
+            body="$(mktemp)"
+            if [[ "$mode" == 'source-token' ]]; then
+              status="$(curl -q -sS --max-time 20 -D "$headers" -o "$body" -w '%{http_code}' \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2026-03-10' \
+                -H "Authorization: Bearer ${GH_TOKEN}" "$url")"
+            else
+              status="$(curl -q -sS --max-time 20 -D "$headers" -o "$body" -w '%{http_code}' \
+                -H 'Accept: application/vnd.github+json' \
+                -H 'X-GitHub-Api-Version: 2026-03-10' "$url")"
+            fi
+            bytes="$(wc -c < "$body" | tr -d ' ')"
+            digest="$(sha256sum "$body" | cut -d' ' -f1)"
+            if grep -qi '^location:' "$headers"; then redirect='yes'; else redirect='no'; fi
+            id="$(jq -r 'if type == "object" then (.id // "") else "" end' "$body" 2>/dev/null || true)"
+            count="$(jq -r 'if type == "array" then length else "" end' "$body" 2>/dev/null || true)"
+            printf '%s status=%s bytes=%s sha256=%s redirect=%s id=%s array_count=%s\n' \
+              "$label" "$status" "$bytes" "$digest" "$redirect" "$id" "$count"
+          }
+          source='https://api.github.com/repos/Alardiians/pages-boundary-lab-b-20260923'
+          target='https://api.github.com/repos/Alardiians/copilot-space-acl-canary-20260923'
+          source_job=107252084367
+          target_job=107222862285
+          source_run=35881870093
+          target_run=35873347919
+          probe public_check "${source}/check-runs/${source_job}" source-token
+          probe private_check "${target}/check-runs/${target_job}" source-token
+          probe private_check_anonymous "${target}/check-runs/${target_job}" anonymous
+          probe public_annotations "${source}/check-runs/${source_job}/annotations" source-token
+          probe private_annotations "${target}/check-runs/${target_job}/annotations" source-token
+          probe private_annotations_anonymous "${target}/check-runs/${target_job}/annotations" anonymous
+          probe public_job "${source}/actions/jobs/${source_job}" source-token
+          probe private_job "${target}/actions/jobs/${target_job}" source-token
+          probe public_job_logs "${source}/actions/jobs/${source_job}/logs" source-token
+          probe private_job_logs "${target}/actions/jobs/${target_job}/logs" source-token
+          probe public_run_logs "${source}/actions/runs/${source_run}/logs" source-token
+          probe private_run_logs "${target}/actions/runs/${target_run}/logs" source-token
