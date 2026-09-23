@@ -7,6 +7,10 @@ on:
         description: Test whether a read-only job can use this workflow's existing OIDC-enabled job URL
         type: boolean
         default: false
+      attestation_boundary:
+        description: Test whether the existing OIDC-enabled job can attest an inert subject without attestations write
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -23,14 +27,14 @@ jobs:
       url: ${{ steps.own_deploy.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
-        if: ${{ !inputs.oidc_boundary }}
+        if: ${{ !inputs.oidc_boundary && !inputs.attestation_boundary }}
       - name: Package only the owned synthetic page
-        if: ${{ !inputs.oidc_boundary }}
+        if: ${{ !inputs.oidc_boundary && !inputs.attestation_boundary }}
         uses: actions/upload-pages-artifact@v4
         with:
           path: .
       - name: Ask Pages to deploy a foreign owned-repository artifact
-        if: ${{ !inputs.oidc_boundary }}
+        if: ${{ !inputs.oidc_boundary && !inputs.attestation_boundary }}
         id: foreign_probe
         shell: bash
         env:
@@ -61,7 +65,7 @@ jobs:
           jq -c '{message,documentation_url,status,id,page_url}' response.json
           echo "status=$status" >> "$GITHUB_OUTPUT"
       - name: Establish Pages deployment with the local artifact
-        if: ${{ !inputs.oidc_boundary && steps.foreign_probe.outputs.status != '200' }}
+        if: ${{ !inputs.oidc_boundary && !inputs.attestation_boundary && steps.foreign_probe.outputs.status != '200' }}
         id: own_deploy
         uses: actions/deploy-pages@v5
       - name: Verify existing OIDC access and pass URL only
@@ -91,6 +95,21 @@ jobs:
           print('HIGH_OIDC_RUN_ID=' + str(payload.get('run_id', '')))
           PY
           printf 'request_url=%s\n' "$ACTIONS_ID_TOKEN_REQUEST_URL" >> "$GITHUB_OUTPUT"
+      - name: Create inert subject for attestation ACL check
+        if: ${{ inputs.attestation_boundary }}
+        shell: bash
+        run: printf '%s\n' 'OWNED_ATTESTATION_CANARY=0f18a35aa48b475f8e3dcfb63719d621' > synthetic-subject.txt
+      - name: Attempt attestation without attestations write
+        if: ${{ inputs.attestation_boundary }}
+        id: attestation_attempt
+        continue-on-error: true
+        uses: actions/attest@v4
+        with:
+          subject-path: synthetic-subject.txt
+      - name: Record bounded attestation outcome
+        if: ${{ inputs.attestation_boundary }}
+        shell: bash
+        run: printf 'ATTEST_ACTION_OUTCOME=%s\n' '${{ steps.attestation_attempt.outcome }}'
   oidc_read_only:
     if: ${{ inputs.oidc_boundary }}
     needs: probe
