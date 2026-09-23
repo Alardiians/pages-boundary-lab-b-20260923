@@ -1,0 +1,19 @@
+GIT
+  remote: https://github.com/Alardiians/dependabot-jit-private-target-20260923.git
+  revision: ab3eb3da5be129c7e6872ead683d0125bdc8ae3b
+  branch: main
+  specs:
+    jit_private_fixture (0.0.1)
+
+GEM
+  remote: https://rubygems.org/
+  specs:
+
+PLATFORMS
+  ruby
+
+DEPENDENCIES
+  jit_private_fixture!
+
+BUNDLED WITH
+   2.4.13
