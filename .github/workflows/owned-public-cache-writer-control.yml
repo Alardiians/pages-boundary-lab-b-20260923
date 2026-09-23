@@ -1,0 +1,44 @@
+name: Owned public-to-private cache writer and control
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  save:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Write inert public canary
+        run: |
+          mkdir -p probe
+          printf '%s\n' 'OWNED_PUBLIC_CACHE_CANARY=6a14c1f4b79845ac8e736f177bf1340d' > probe/cache.txt
+          printf 'PUBLIC_CANARY_SHA256='
+          sha256sum probe/cache.txt | awk '{print $1}'
+      - name: Save public-repo cache
+        uses: actions/cache/save@v6
+        with:
+          path: probe/cache.txt
+          key: owned-public-to-private-cache-4c9d57f483da4b83a7c713fbf65264d1
+
+  same_repo_control:
+    needs: save
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore exact key in public repo
+        id: restore
+        uses: actions/cache/restore@v6
+        with:
+          path: probe/cache.txt
+          key: owned-public-to-private-cache-4c9d57f483da4b83a7c713fbf65264d1
+          fail-on-cache-miss: false
+      - name: Check exact synthetic digest
+        run: |
+          printf 'SAME_REPO_CACHE_HIT=%s\n' '${{ steps.restore.outputs.cache-hit }}'
+          if test -f probe/cache.txt; then
+            actual="$(sha256sum probe/cache.txt | awk '{print $1}')"
+            printf 'SAME_REPO_SHA256=%s\n' "$actual"
+            test "$actual" = '3e0cb63215b03a6d39146fb1081dc3935a79fe3d42fcc5a3b007685501fb405a'
+          else
+            exit 1
+          fi
