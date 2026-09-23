@@ -1,0 +1,52 @@
+name: Owned dotdot artifact name boundary
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  producer:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Create inert files
+        shell: bash
+        run: |
+          mkdir -p safe-payload dotdot-payload
+          printf 'SAFE_CONTROL_%s\n' "$GITHUB_RUN_ID" > safe-payload/safe-control.txt
+          printf 'DOTDOT_OUTSIDE_%s\n' "$GITHUB_RUN_ID" > dotdot-payload/dotdot-outside.txt
+      - name: Upload safe-name control
+        uses: actions/upload-artifact@v7
+        with:
+          name: safe-control
+          path: safe-payload/safe-control.txt
+          retention-days: 1
+      - name: Try upload literal dotdot name
+        id: dotdot
+        continue-on-error: true
+        uses: actions/upload-artifact@v7
+        with:
+          name: '..'
+          path: dotdot-payload/dotdot-outside.txt
+          retention-days: 1
+      - name: Record upload outcome
+        shell: bash
+        run: echo "DOTDOT_UPLOAD_OUTCOME=${{ steps.dotdot.outcome }}"
+
+  consumer:
+    needs: producer
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Prepare isolated destination
+        shell: bash
+        run: mkdir -p "$RUNNER_TEMP/dotdot-probe/inside"
+      - name: Download every artifact
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ runner.temp }}/dotdot-probe/inside
+      - name: Check destination boundary
+        shell: bash
+        run: |
+          if test -f "$RUNNER_TEMP/dotdot-probe/inside/safe-control/safe-control.txt"; then echo 'SAFE_CONTROL_INSIDE=true'; else echo 'SAFE_CONTROL_INSIDE=false'; fi
+          if test -f "$RUNNER_TEMP/dotdot-probe/dotdot-outside.txt"; then echo 'DOTDOT_ESCAPED_ONE_LEVEL=true'; else echo 'DOTDOT_ESCAPED_ONE_LEVEL=false'; fi
+          if test -f "$RUNNER_TEMP/dotdot-probe/inside/dotdot-outside.txt"; then echo 'DOTDOT_INSIDE=true'; else echo 'DOTDOT_INSIDE=false'; fi
