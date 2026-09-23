@@ -51,3 +51,9 @@ jobs:
         run: |
           printf 'FINAL_SCRIPT_SHA256='; sha256sum scripts/verify.sh | cut -d' ' -f1
           bash scripts/verify.sh
+      - name: Upload boolean-only synthetic receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: owned-receiver-synthetic-boolean
+          path: proof/receiver-boolean.txt
+          if-no-files-found: error
