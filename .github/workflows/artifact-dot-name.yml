@@ -1,0 +1,27 @@
+name: Owned artifact dot-name boundary
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  dot_name:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create inert nested payload
+        shell: bash
+        run: |
+          mkdir -p payload/TRUSTED
+          printf '%s\n' 'OWNED_DOT_NAME_CANARY=25f48c4425a4475e95e84e6e7ec503ab' > payload/TRUSTED/marker.txt
+      - name: Attempt dot-named artifact upload
+        id: dot_upload
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: '.'
+          path: payload
+          if-no-files-found: error
+      - name: Record bounded upload outcome
+        shell: bash
+        run: printf 'DOT_UPLOAD_OUTCOME=%s\n' '${{ steps.dot_upload.outcome }}'
