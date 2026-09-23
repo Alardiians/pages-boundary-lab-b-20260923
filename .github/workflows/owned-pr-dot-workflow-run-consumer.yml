@@ -1,0 +1,53 @@
+name: Owned PR dot artifact privileged consumer
+
+on:
+  workflow_run:
+    workflows: [Owned PR dot artifact producer]
+    types: [completed]
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  consume:
+    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out fixed base branch
+        uses: actions/checkout@v4
+        with:
+          ref: main
+          persist-credentials: false
+      - name: Record trusted base file before downloads
+        shell: bash
+        run: |
+          printf 'SOURCE_EVENT=%s\nSOURCE_RUN_ID=%s\n' '${{ github.event.workflow_run.event }}' '${{ github.event.workflow_run.id }}'
+          printf 'BASE_SCRIPT_SHA256='; sha256sum scripts/verify.sh | cut -d' ' -f1
+          bash scripts/verify.sh
+      - name: Download only fixed-name lower artifact as control
+        uses: actions/download-artifact@v8
+        with:
+          name: UNTRUSTED
+          path: ${{ github.workspace }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Confirm fixed-name artifact did not change trusted file
+        shell: bash
+        run: |
+          printf 'CONTROL_SCRIPT_SHA256='; sha256sum scripts/verify.sh | cut -d' ' -f1
+          bash scripts/verify.sh
+      - name: Download all artifacts with separate directories
+        uses: actions/download-artifact@v8
+        with:
+          path: ${{ github.workspace }}
+          merge-multiple: false
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Execute only checked-out trusted path
+        shell: bash
+        env:
+          DOT_DUMMY_SECRET: ${{ secrets.DOT_DUMMY_SECRET }}
+        run: |
+          printf 'FINAL_SCRIPT_SHA256='; sha256sum scripts/verify.sh | cut -d' ' -f1
+          bash scripts/verify.sh
