@@ -7,7 +7,7 @@ on:
 
 permissions:
   actions: read
-  contents: write
+  contents: read
 
 jobs:
   consume:
@@ -37,24 +37,20 @@ jobs:
         run: |
           printf 'CONTROL_SCRIPT_SHA256='; sha256sum scripts/verify.sh | cut -d' ' -f1
           bash scripts/verify.sh
-      - name: Download all artifacts with separate directories
+      - name: Download all artifacts into isolated temp directory
         uses: actions/download-artifact@v8
         with:
-          path: ${{ github.workspace }}
+          path: ${{ runner.temp }}/h019-isolated-artifacts
           merge-multiple: false
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id }}
-      - name: Execute only checked-out trusted path
+      - name: Check isolated PR file did not replace checked-out script
         shell: bash
         env:
           DOT_DUMMY_SECRET: ${{ secrets.DOT_DUMMY_SECRET }}
-          H019_WRITE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          printf 'ISOLATED_PR_SCRIPT_SHA256='; sha256sum "$RUNNER_TEMP/h019-isolated-artifacts/scripts/verify.sh" | cut -d' ' -f1
           printf 'FINAL_SCRIPT_SHA256='; sha256sum scripts/verify.sh | cut -d' ' -f1
           bash scripts/verify.sh
-      - name: Upload boolean-only synthetic receipt
-        uses: actions/upload-artifact@v4
-        with:
-          name: owned-receiver-synthetic-boolean
-          path: proof/receiver-boolean.txt
-          if-no-files-found: error
+          test ! -e proof/receiver-boolean.txt
+          printf 'ISOLATED_CONTROL=trusted_checkout_unchanged\n'
