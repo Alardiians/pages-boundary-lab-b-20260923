@@ -106,8 +106,15 @@ jobs:
               ? JSON.parse(Buffer.from(runtimeToken.split('.')[1], 'base64url').toString('utf8')).scp || ''
               : '';
             const own = scope.split(' ').find(part => part.startsWith('Actions.Results:'))?.split(':');
-            const match = new URL(requestUrl).pathname.match(/\/plans\/([^/]+)\/jobs\/([^/]+)\/idtoken$/i);
-            console.log(`HIGH_URL_PLAN_JOB_PATTERN=${Boolean(match)}`);
+            const path = new URL(requestUrl).pathname;
+            const legacy = path.match(/\/plans\/([^/]+)\/jobs\/([^/]+)\/idtoken$/i);
+            const compact = path.match(/\/idtoken\/([^/]+)\/([^/]+)$/i);
+            const match = legacy || compact;
+            console.log(`HIGH_URL_PATH_VARIANT=${legacy ? 'legacy' : compact ? 'compact' : 'unknown'}`);
+            console.log('HIGH_URL_PATH_SHAPE=' + path.split('/').filter(Boolean).map(part =>
+              ['_apis', 'distributedtask', 'hubs', 'Actions', 'plans', 'jobs', 'idtoken'].includes(part)
+                ? part : /^[0-9a-f-]{36}$/i.test(part) ? 'uuid' : `opaque${part.length}`
+            ).join('/'));
             console.log(`HIGH_URL_BACKEND_RUN_MATCH=${Boolean(match && own && match[1].toLowerCase() === own[1].toLowerCase())}`);
             console.log(`HIGH_URL_BACKEND_JOB_MATCH=${Boolean(match && own && match[2].toLowerCase() === own[2].toLowerCase())}`);
       - name: Create inert subject for attestation ACL check
@@ -160,14 +167,15 @@ jobs:
             const scope = JSON.parse(Buffer.from(runtimeToken.split('.')[1], 'base64url').toString('utf8')).scp || '';
             const own = scope.split(' ').find(part => part.startsWith('Actions.Results:'))?.split(':');
             const parsedUrl = new URL(url);
-            const match = parsedUrl.pathname.match(/\/plans\/([^/]+)\/jobs\/([^/]+)\/idtoken$/i);
-            console.log(`LOW_URL_PLAN_JOB_PATTERN=${Boolean(match)}`);
+            const legacy = parsedUrl.pathname.match(/\/plans\/([^/]+)\/jobs\/([^/]+)\/idtoken$/i);
+            const compact = parsedUrl.pathname.match(/\/idtoken\/([^/]+)\/([^/]+)$/i);
+            const match = legacy || compact;
+            console.log(`LOW_URL_PATH_VARIANT=${legacy ? 'legacy' : compact ? 'compact' : 'unknown'}`);
             console.log(`LOW_BACKEND_IDS_PRESENT=${Boolean(own && own.length === 3)}`);
             if (!match || !own || own.length !== 3) return;
-            parsedUrl.pathname = parsedUrl.pathname.replace(
-              /\/plans\/[^/]+\/jobs\/[^/]+\/idtoken$/i,
-              `/plans/${own[1]}/jobs/${own[2]}/idtoken`
-            );
+            parsedUrl.pathname = legacy
+              ? parsedUrl.pathname.replace(/\/plans\/[^/]+\/jobs\/[^/]+\/idtoken$/i, `/plans/${own[1]}/jobs/${own[2]}/idtoken`)
+              : parsedUrl.pathname.replace(/\/idtoken\/[^/]+\/[^/]+$/i, `/idtoken/${own[1]}/${own[2]}`);
             const direct = await fetch(parsedUrl, {
               headers: {Authorization: `Bearer ${runtimeToken}`},
               redirect: 'error'
