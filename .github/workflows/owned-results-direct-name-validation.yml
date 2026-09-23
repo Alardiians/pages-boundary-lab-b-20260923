@@ -1,0 +1,59 @@
+name: Owned Results direct artifact name validation
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Test bounded synthetic artifact names
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const token = process.env.ACTIONS_RUNTIME_TOKEN;
+            const resultsUrl = process.env.ACTIONS_RESULTS_URL;
+            if (!token || !resultsUrl) throw new Error('Missing owned Actions Results context');
+            const claims = JSON.parse(Buffer.from(token.split('.')[1], 'base64url'));
+            const scope = String(claims.scp || '').split(' ').find(s => s.startsWith('Actions.Results:'));
+            if (!scope) throw new Error('Missing Actions.Results scope');
+            const [, runBackendId, jobBackendId] = scope.split(':');
+            const suffix = String(context.runId);
+            const cases = [
+              ['control', 'control-' + suffix],
+              ['nested_forward', 'nested/probe-' + suffix],
+              ['nested_back', 'nested\\probe-' + suffix],
+              ['parent_forward', '../escape-' + suffix],
+              ['parent_back', '..\\escape-' + suffix],
+              ['deep_parent_forward', 'nested/../../escape-' + suffix],
+              ['deep_parent_back', 'nested\\..\\..\\escape-' + suffix],
+              ['mixed_parent', 'nested/..\\../escape-' + suffix]
+            ];
+            const endpoint = new URL('/twirp/github.actions.results.api.v1.ArtifactService/CreateArtifact', resultsUrl);
+            const headers = {Authorization: 'Bearer ' + token, 'Content-Type': 'application/json'};
+            for (const test of cases) {
+              let status = 0;
+              let ok = false;
+              let code = '';
+              let uploadUrlPresent = false;
+              try {
+                const response = await fetch(endpoint, {
+                  method: 'POST', headers,
+                  body: JSON.stringify({
+                    workflow_run_backend_id: runBackendId,
+                    workflow_job_run_backend_id: jobBackendId,
+                    name: test[1], version: 7, mime_type: 'text/plain'
+                  })
+                });
+                status = response.status;
+                const result = await response.json();
+                ok = result.ok === true;
+                code = String(result.code || '');
+                uploadUrlPresent = Boolean(result.signedUploadUrl || result.signed_upload_url);
+              } catch (error) {
+                code = error.name;
+              }
+              core.info(test[0] + ' STATUS=' + status + ' OK=' + ok + ' CODE=' + code + ' UPLOAD_URL_PRESENT=' + uploadUrlPresent);
+            }
