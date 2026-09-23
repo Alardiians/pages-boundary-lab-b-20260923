@@ -28,6 +28,7 @@ jobs:
           set -euo pipefail
           python3 - <<'PY'
           import ipaddress, os, urllib.request
+          import pathlib, subprocess, time
           address = ipaddress.ip_address(os.environ['TARGET_IP'])
           if not isinstance(address, ipaddress.IPv4Address) or not address.is_private:
               raise SystemExit('Target must be one private IPv4 address')
@@ -37,6 +38,26 @@ jobs:
           expected = f'OWNED_VNET_CANARY_A_RUN_{run_id}\n'.encode()
           url = f'http://{address}:41837/canary.txt'
           opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+          self_dir = pathlib.Path('/tmp/owned-vnet-self')
+          self_dir.mkdir(exist_ok=True)
+          (self_dir / 'self.txt').write_text('OWNED_SELF_CONTROL\n')
+          self_expected = b'OWNED_SELF_CONTROL\n'
+          self_ip = next(
+              (ip for ip in subprocess.check_output(['hostname', '-I'], text=True).split()
+               if ip.startswith('10.')), None)
+          server = subprocess.Popen(
+              ['python3', '-m', 'http.server', '41838', '--bind', '0.0.0.0',
+               '--directory', str(self_dir)], stdout=subprocess.DEVNULL,
+              stderr=subprocess.DEVNULL)
+          time.sleep(1)
+          try:
+              with opener.open(f'http://{self_ip}:41838/self.txt', timeout=3) as response:
+                  print(f'SELF_PRIVATE_IP_CONTROL={response.status == 200 and response.read() == self_expected}')
+          except Exception as error:
+              print(f'SELF_PRIVATE_IP_CONTROL=false')
+              print(f'SELF_ERROR_TYPE={type(error).__name__}')
+          finally:
+              server.terminate()
           try:
               with opener.open(url, timeout=8) as response:
                   body = response.read(256)
@@ -44,5 +65,6 @@ jobs:
                   print(f'PEER_CANARY_MATCH={body == expected}')
           except Exception as error:
               print(f'PEER_ERROR_TYPE={type(error).__name__}')
+              print(f'PEER_ERROR_REASON_TYPE={type(getattr(error, "reason", None)).__name__}')
               print('PEER_CANARY_MATCH=false')
           PY
