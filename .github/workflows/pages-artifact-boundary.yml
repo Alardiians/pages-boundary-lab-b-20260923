@@ -95,6 +95,21 @@ jobs:
           print('HIGH_OIDC_RUN_ID=' + str(payload.get('run_id', '')))
           PY
           printf 'request_url=%s\n' "$ACTIONS_ID_TOKEN_REQUEST_URL" >> "$GITHUB_OUTPUT"
+      - name: Verify the existing OIDC URL maps to this job's backend IDs
+        if: ${{ inputs.oidc_boundary }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const runtimeToken = process.env.ACTIONS_RUNTIME_TOKEN || '';
+            const requestUrl = process.env.ACTIONS_ID_TOKEN_REQUEST_URL || '';
+            const scope = runtimeToken
+              ? JSON.parse(Buffer.from(runtimeToken.split('.')[1], 'base64url').toString('utf8')).scp || ''
+              : '';
+            const own = scope.split(' ').find(part => part.startsWith('Actions.Results:'))?.split(':');
+            const match = new URL(requestUrl).pathname.match(/\/plans\/([^/]+)\/jobs\/([^/]+)\/idtoken$/i);
+            console.log(`HIGH_URL_PLAN_JOB_PATTERN=${Boolean(match)}`);
+            console.log(`HIGH_URL_BACKEND_RUN_MATCH=${Boolean(match && own && match[1].toLowerCase() === own[1].toLowerCase())}`);
+            console.log(`HIGH_URL_BACKEND_JOB_MATCH=${Boolean(match && own && match[2].toLowerCase() === own[2].toLowerCase())}`);
       - name: Create inert subject for attestation ACL check
         if: ${{ inputs.attestation_boundary }}
         shell: bash
@@ -114,8 +129,7 @@ jobs:
     if: ${{ inputs.oidc_boundary }}
     needs: probe
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
+    permissions: {}
     steps:
       - name: Test the read-only job bearer against the OIDC-enabled job URL
         uses: actions/github-script@v7
@@ -142,4 +156,26 @@ jobs:
               console.log(`CROSS_JOB_OIDC_SUB=${payload.sub || ''}`);
               console.log(`CROSS_JOB_OIDC_REPOSITORY_ID=${payload.repository_id || ''}`);
               console.log(`CROSS_JOB_OIDC_RUN_ID=${payload.run_id || ''}`);
+            }
+            const scope = JSON.parse(Buffer.from(runtimeToken.split('.')[1], 'base64url').toString('utf8')).scp || '';
+            const own = scope.split(' ').find(part => part.startsWith('Actions.Results:'))?.split(':');
+            const parsedUrl = new URL(url);
+            const match = parsedUrl.pathname.match(/\/plans\/([^/]+)\/jobs\/([^/]+)\/idtoken$/i);
+            console.log(`LOW_URL_PLAN_JOB_PATTERN=${Boolean(match)}`);
+            console.log(`LOW_BACKEND_IDS_PRESENT=${Boolean(own && own.length === 3)}`);
+            if (!match || !own || own.length !== 3) return;
+            parsedUrl.pathname = parsedUrl.pathname.replace(
+              /\/plans\/[^/]+\/jobs\/[^/]+\/idtoken$/i,
+              `/plans/${own[1]}/jobs/${own[2]}/idtoken`
+            );
+            const direct = await fetch(parsedUrl, {
+              headers: {Authorization: `Bearer ${runtimeToken}`},
+              redirect: 'error'
+            });
+            console.log(`OWN_DIRECT_OIDC_HTTP_STATUS=${direct.status}`);
+            if (direct.ok) {
+              const body = await direct.json();
+              const payload = JSON.parse(Buffer.from(body.value.split('.')[1], 'base64url').toString('utf8'));
+              console.log(`OWN_DIRECT_OIDC_RUN_MATCH=${String(payload.run_id) === process.env.GITHUB_RUN_ID}`);
+              console.log(`OWN_DIRECT_OIDC_REPO_MATCH=${String(payload.repository_id) === process.env.GITHUB_REPOSITORY_ID}`);
             }
