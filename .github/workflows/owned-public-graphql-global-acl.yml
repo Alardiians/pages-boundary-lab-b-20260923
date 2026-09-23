@@ -1,0 +1,169 @@
+name: Owned public GraphQL global ACL probe
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check owned global IDs and owner connection
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import urllib.error
+          import urllib.request
+
+          PUBLIC_ID = 'R_kgDOUnVqNw'
+          TARGET_ID = 'R_kgDOUnbB0g'
+          PUBLIC_LEGACY_ID = 'MDEwOlJlcG9zaXRvcnkxMzgzNDI2NjE1'
+          TARGET_LEGACY_ID = 'MDEwOlJlcG9zaXRvcnkxMzgzNTE0NTc4'
+          TARGET_RELEASE_ID = 'RE_kwDOUnbB0s4XhtBX'
+          TARGET_ASSET_IDS = (
+            'RA_kwDOUnbB0s4izR4d',
+            'RA_kwDOUnbB0s4izTdW',
+            'RA_kwDOUnbB0s4izViq',
+          )
+          EXPECTED_CANARY = '5b01c7c925785c5b73d8fc12ce5eae159bc3ec6b9cd991a83527a30c10b26446'
+          TARGET_NAME = 'Alardiians/copilot-space-acl-canary-20260923'
+          PUBLIC_NAME = 'Alardiians/pages-boundary-lab-b-20260923'
+
+          def emit(label, **fields):
+              line = 'GRAPHQL_GLOBAL_ACL ' + json.dumps({'label': label, **fields}, sort_keys=True)
+              print(line, flush=True)
+              path = os.getenv('GITHUB_STEP_SUMMARY')
+              if path:
+                  with open(path, 'a', encoding='utf8') as f:
+                      f.write('`' + line + '`\n\n')
+
+          def check_canary(value):
+              return isinstance(value, str) and hashlib.sha256(value.encode()).hexdigest() == EXPECTED_CANARY
+
+          def graphql(query, variables=None):
+              body = json.dumps({'query': query, 'variables': variables or {}}).encode()
+              req = urllib.request.Request(
+                  'https://api.github.com/graphql', data=body, method='POST',
+                  headers={
+                      'Accept': 'application/vnd.github+json',
+                      'Content-Type': 'application/json',
+                      'Authorization': 'Bearer ' + os.environ['GH_TOKEN'],
+                      'X-GitHub-Api-Version': '2026-03-10',
+                  },
+              )
+              try:
+                  with urllib.request.urlopen(req, timeout=25) as resp:
+                      status, raw = resp.status, resp.read(1000000)
+              except urllib.error.HTTPError as err:
+                  status, raw = err.code, err.read(1000000)
+              return status, json.loads(raw)
+
+          emit('context', source_repo=os.environ.get('GITHUB_REPOSITORY'), token_present=bool(os.environ.get('GH_TOKEN')))
+
+          ids = [PUBLIC_ID, TARGET_ID, TARGET_RELEASE_ID, *TARGET_ASSET_IDS]
+          nodes_query = '''query($ids:[ID!]!) {
+            nodes(ids:$ids) {
+              id __typename
+              ... on Repository {
+                nameWithOwner isPrivate
+                object(expression:"HEAD:private-canary.txt") { ... on Blob { text } }
+              }
+              ... on Release { tagName }
+              ... on ReleaseAsset { name size }
+            }
+            public: repository(owner:"Alardiians", name:"pages-boundary-lab-b-20260923") {
+              id object(expression:"HEAD:README.md") { ... on Blob { text } }
+            }
+          }'''
+          try:
+              status, result = graphql(nodes_query, {'ids': ids})
+              data = result.get('data') or {}
+              public = data.get('public') or {}
+              nodes = data.get('nodes') or []
+              emit('nodes', status=status, error_count=len(result.get('errors') or []),
+                   public_lookup_id_match=public.get('id') == PUBLIC_ID,
+                   public_readme_present=isinstance((public.get('object') or {}).get('text'), str),
+                   node_count=len(nodes),
+                   public_node_visible=len(nodes) > 0 and bool(nodes[0]) and nodes[0].get('id') == PUBLIC_ID,
+                   private_repo_visible=len(nodes) > 1 and bool(nodes[1]) and nodes[1].get('id') == TARGET_ID,
+                   private_canary_match=check_canary((((nodes[1] if len(nodes) > 1 else None) or {}).get('object') or {}).get('text')),
+                   private_release_visible=len(nodes) > 2 and bool(nodes[2]) and nodes[2].get('id') == TARGET_RELEASE_ID,
+                   private_asset_visible_count=sum(bool(nodes[i]) and nodes[i].get('id') == ids[i] for i in range(3, min(len(nodes), 6))))
+          except Exception as err:
+              emit('nodes_error', error_type=type(err).__name__)
+
+          legacy_query = '''query($public:ID!, $private:ID!) {
+            public: node(id:$public) { ... on Repository { id nameWithOwner } }
+            private: node(id:$private) {
+              ... on Repository {
+                id nameWithOwner object(expression:"HEAD:private-canary.txt") { ... on Blob { text } }
+              }
+            }
+          }'''
+          try:
+              status, result = graphql(legacy_query, {'public': PUBLIC_LEGACY_ID, 'private': TARGET_LEGACY_ID})
+              data = result.get('data') or {}
+              public = data.get('public') or {}
+              private = data.get('private') or {}
+              emit('legacy_node', status=status, error_count=len(result.get('errors') or []),
+                   public_control_present=public.get('nameWithOwner') == PUBLIC_NAME,
+                   private_target_present=private.get('nameWithOwner') == TARGET_NAME,
+                   private_canary_match=check_canary((private.get('object') or {}).get('text')))
+          except Exception as err:
+              emit('legacy_node_error', error_type=type(err).__name__)
+
+          connections_query = '''query {
+            user(login:"Alardiians") {
+              privateRepos: repositories(first:100, privacy:PRIVATE, ownerAffiliations:OWNER,
+                  orderBy:{field:UPDATED_AT,direction:DESC}) {
+                pageInfo { hasNextPage }
+                nodes { id nameWithOwner object(expression:"HEAD:private-canary.txt") { ... on Blob { text } } }
+              }
+              publicRepos: repositories(first:100, privacy:PUBLIC, ownerAffiliations:OWNER,
+                  orderBy:{field:UPDATED_AT,direction:DESC}) {
+                nodes { id nameWithOwner }
+              }
+            }
+          }'''
+          try:
+              status, result = graphql(connections_query)
+              user = ((result.get('data') or {}).get('user') or {})
+              private = (user.get('privateRepos') or {})
+              private_nodes = private.get('nodes') or []
+              public_nodes = ((user.get('publicRepos') or {}).get('nodes') or [])
+              emit('owner_connection', status=status, error_count=len(result.get('errors') or []),
+                   user_visible=bool(user),
+                   public_control_present=any((n or {}).get('id') == PUBLIC_ID for n in public_nodes),
+                   private_target_present=any((n or {}).get('id') == TARGET_ID or (n or {}).get('nameWithOwner') == TARGET_NAME for n in private_nodes),
+                   private_canary_match=any(check_canary(((n or {}).get('object') or {}).get('text')) for n in private_nodes),
+                   private_has_next_page=(private.get('pageInfo') or {}).get('hasNextPage'))
+          except Exception as err:
+              emit('owner_connection_error', error_type=type(err).__name__)
+
+          resources_query = '''query {
+            public: resource(url:"https://github.com/Alardiians/pages-boundary-lab-b-20260923") {
+              __typename ... on Repository { id nameWithOwner }
+            }
+            private: resource(url:"https://github.com/Alardiians/copilot-space-acl-canary-20260923") {
+              __typename ... on Repository {
+                id nameWithOwner object(expression:"HEAD:private-canary.txt") { ... on Blob { text } }
+              }
+            }
+          }'''
+          try:
+              status, result = graphql(resources_query)
+              data = result.get('data') or {}
+              public = data.get('public') or {}
+              private = data.get('private') or {}
+              emit('resource_url', status=status, error_count=len(result.get('errors') or []),
+                   public_id_match=public.get('id') == PUBLIC_ID,
+                   private_id_match=private.get('id') == TARGET_ID,
+                   private_canary_match=check_canary((private.get('object') or {}).get('text')))
+          except Exception as err:
+              emit('resource_url_error', error_type=type(err).__name__)
+          PY
