@@ -1,0 +1,54 @@
+name: Owned Pages remote theme safe target probe
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  owned_theme_control:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Prepare owned synthetic control
+        shell: bash
+        run: |
+          mkdir -p ssrf-fixtures/owned-control
+          printf '%s\n' 'remote_theme: Alardiians/pages-boundary-lab-20260923' 'plugins:' '  - jekyll-remote-theme' > ssrf-fixtures/owned-control/_config.yml
+          printf '%s\n' '---' '---' 'OWNED_REMOTE_THEME_CONTROL_20260923' > ssrf-fixtures/owned-control/index.md
+      - name: Build owned public remote theme control with official Pages builder
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./ssrf-fixtures/owned-control
+          destination: ./ssrf-output/owned-control
+      - name: Confirm owned control output
+        shell: bash
+        run: |
+          test -f ssrf-output/owned-control/index.html
+          grep -q 'OWNED_REMOTE_THEME_CONTROL_20260923' ssrf-output/owned-control/index.html
+          echo 'OWNED_CONTROL_OUTPUT=true'
+
+  designated_safe_target:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - name: Prepare designated GitHub safe target candidate
+        shell: bash
+        run: |
+          mkdir -p ssrf-fixtures/safe-target
+          printf '%s\n' 'remote_theme: http://ssrf-target.iad.github.net/Alardiians/pages-boundary-lab-b-20260923' 'plugins:' '  - jekyll-remote-theme' > ssrf-fixtures/safe-target/_config.yml
+          printf '%s\n' '---' '---' 'SAFE_TARGET_THEME_CANDIDATE_20260923' > ssrf-fixtures/safe-target/index.md
+      - name: Build designated GitHub safe target with official Pages builder
+        uses: actions/jekyll-build-pages@v1
+        with:
+          source: ./ssrf-fixtures/safe-target
+          destination: ./ssrf-output/safe-target
+      - name: Confirm candidate output
+        shell: bash
+        run: |
+          test -f ssrf-output/safe-target/index.html
+          grep -q 'SAFE_TARGET_THEME_CANDIDATE_20260923' ssrf-output/safe-target/index.html
+          echo 'SAFE_TARGET_OUTPUT=true'
