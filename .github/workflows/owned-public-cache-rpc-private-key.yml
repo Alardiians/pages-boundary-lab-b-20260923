@@ -1,0 +1,61 @@
+name: Owned public cache RPC private-key boundary
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cache_rpc:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Restore own public cache positive control
+        id: restore
+        uses: actions/cache/restore@v6
+        with:
+          path: probe/cache.txt
+          key: owned-public-to-private-cache-4c9d57f483da4b83a7c713fbf65264d1
+          fail-on-cache-miss: true
+      - name: Check exact owned public canary
+        shell: bash
+        run: |
+          test '${{ steps.restore.outputs.cache-hit }}' = 'true'
+          test "$(sha256sum probe/cache.txt | cut -d' ' -f1)" = '3e0cb63215b03a6d39146fb1081dc3935a79fe3d42fcc5a3b007685501fb405a'
+          echo 'OWN_PUBLIC_CACHE_CANARY_MATCH=true'
+      - name: Compare cache v2 RPC key scopes
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const crypto = require('crypto');
+            const version = crypto.createHash('sha256').update('probe/cache.txt|zstd-without-long|1.0').digest('hex');
+            const token = process.env.ACTIONS_RUNTIME_TOKEN;
+            const root = process.env.ACTIONS_RESULTS_URL;
+            if (!token || !root || !process.env.ACTIONS_CACHE_SERVICE_V2) throw new Error('Expected cache v2 runtime context unavailable');
+            const endpoint = new URL('/twirp/github.actions.results.api.v1.CacheService/GetCacheEntryDownloadURL', root);
+            async function get(label, key) {
+              const response = await fetch(endpoint, {
+                method: 'POST',
+                headers: {Authorization: `Bearer ${token}`, 'Content-Type': 'application/json'},
+                body: JSON.stringify({key, restoreKeys: [], version})
+              });
+              const body = await response.json();
+              const signedUrl = body.signed_download_url || body.signedDownloadUrl;
+              console.log(`${label}_RPC_STATUS=${response.status}`);
+              console.log(`${label}_RPC_OK=${body.ok === true}`);
+              console.log(`${label}_SIGNED_URL_PRESENT=${Boolean(signedUrl)}`);
+              return signedUrl;
+            }
+            const own = await get('OWN_PUBLIC', 'owned-public-to-private-cache-4c9d57f483da4b83a7c713fbf65264d1');
+            if (!own) throw new Error('Own public cache RPC positive control failed');
+            const ownResponse = await fetch(own);
+            console.log(`OWN_PUBLIC_ARCHIVE_STATUS=${ownResponse.status}`);
+            if (ownResponse.status !== 200) throw new Error('Own public signed archive read failed');
+            const privateUrl = await get('OTHER_PRIVATE', 'owned-crossrepo-cache-26ef258f919745f4b479e784b33e2f06');
+            if (privateUrl) {
+              const privateResponse = await fetch(privateUrl);
+              const bytes = Buffer.from(await privateResponse.arrayBuffer());
+              const hash = crypto.createHash('sha256').update(bytes).digest('hex');
+              console.log(`OTHER_PRIVATE_ARCHIVE_STATUS=${privateResponse.status}`);
+              console.log(`OTHER_PRIVATE_ARCHIVE_BYTES=${bytes.length}`);
+              console.log(`OTHER_PRIVATE_ARCHIVE_MATCHES_KNOWN_OBJECT=${privateResponse.status === 200 && hash === '5a1f7b4ee94a67f0112360ccff5a4ab018ce99181e9f106c9ffd844a9c3c4d9c'}`);
+            }
