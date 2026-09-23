@@ -1,0 +1,48 @@
+name: Owned runner VNet client
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_ip:
+        description: Private IPv4 logged by the concurrent owned listener
+        type: string
+        required: true
+      target_run_id:
+        description: Owned listener run ID for canary equality check
+        type: string
+        required: true
+
+permissions: {}
+
+jobs:
+  client:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - name: Probe one owned peer runner address and port
+        shell: bash
+        env:
+          TARGET_IP: ${{ inputs.target_ip }}
+          TARGET_RUN_ID: ${{ inputs.target_run_id }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import ipaddress, os, urllib.request
+          address = ipaddress.ip_address(os.environ['TARGET_IP'])
+          if not isinstance(address, ipaddress.IPv4Address) or not address.is_private:
+              raise SystemExit('Target must be one private IPv4 address')
+          run_id = os.environ['TARGET_RUN_ID']
+          if not run_id.isdecimal():
+              raise SystemExit('Target run ID must be decimal')
+          expected = f'OWNED_VNET_CANARY_A_RUN_{run_id}\n'.encode()
+          url = f'http://{address}:41837/canary.txt'
+          opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+          try:
+              with opener.open(url, timeout=8) as response:
+                  body = response.read(256)
+                  print(f'PEER_HTTP_STATUS={response.status}')
+                  print(f'PEER_CANARY_MATCH={body == expected}')
+          except Exception as error:
+              print(f'PEER_ERROR_TYPE={type(error).__name__}')
+              print('PEER_CANARY_MATCH=false')
+          PY
