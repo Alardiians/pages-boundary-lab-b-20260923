@@ -1,0 +1,67 @@
+name: Owned artifact dot-name containment probe
+
+on:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  trusted:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create trusted synthetic marker
+        shell: bash
+        run: |
+          mkdir -p trusted
+          printf '%s\n' 'MARKER_SOURCE=TRUSTED_ARTIFACT' > trusted/marker.txt
+      - name: Upload trusted artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: TRUSTED
+          path: trusted
+          if-no-files-found: error
+
+  lower:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create inert dot artifact with nested marker
+        shell: bash
+        run: |
+          mkdir -p lower/TRUSTED
+          dd if=/dev/urandom of=lower/0-padding.bin bs=1M count=4 status=none
+          printf '%s\n' 'MARKER_SOURCE=DOT_ARTIFACT' > lower/TRUSTED/marker.txt
+      - name: Upload dot-named artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: '.'
+          path: lower
+          if-no-files-found: error
+
+  consumer:
+    needs: [trusted, lower]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Exact-name positive control
+        uses: actions/download-artifact@v8
+        with:
+          name: TRUSTED
+          path: exact
+      - name: Validate exact-name control
+        shell: bash
+        run: |
+          printf 'EXACT_MARKER=%s\n' "$(cat exact/marker.txt)"
+          test "$(cat exact/marker.txt)" = 'MARKER_SOURCE=TRUSTED_ARTIFACT'
+      - name: Download all with separate directories
+        uses: actions/download-artifact@v8
+        with:
+          path: all
+          merge-multiple: false
+      - name: Record final path and source
+        shell: bash
+        run: |
+          printf 'ALL_TRUSTED_MARKER=%s\n' "$(cat all/TRUSTED/marker.txt)"
+          printf 'DOT_ROOT_PADDING_PRESENT=%s\n' "$(test -f all/0-padding.bin && echo true || echo false)"
+          printf 'EXACT_SHA256='; sha256sum exact/marker.txt | cut -d' ' -f1
+          printf 'FINAL_SHA256='; sha256sum all/TRUSTED/marker.txt | cut -d' ' -f1
