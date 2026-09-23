@@ -7,11 +7,16 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  contents: write
 
 jobs:
   consume:
-    if: ${{ github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' }}
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success' &&
+          github.event.workflow_run.event == 'pull_request' &&
+          github.event.workflow_run.actor.login == 'alardiianstest' &&
+          github.event.workflow_run.head_repository.full_name == 'alardiianstest/pages-boundary-lab-b-20260923' &&
+          github.event.workflow_run.head_branch == 'codex/h019-outsider-proof-20260923' }}
     runs-on: ubuntu-latest
     steps:
       - name: Check out fixed base branch
@@ -22,7 +27,7 @@ jobs:
       - name: Record trusted base file before downloads
         shell: bash
         run: |
-          printf 'SOURCE_EVENT=%s\nSOURCE_RUN_ID=%s\n' '${{ github.event.workflow_run.event }}' '${{ github.event.workflow_run.id }}'
+          printf 'SOURCE_EVENT=%s\nSOURCE_RUN_ID=%s\nSOURCE_ACTOR=%s\nSOURCE_HEAD_SHA=%s\n' '${{ github.event.workflow_run.event }}' '${{ github.event.workflow_run.id }}' '${{ github.event.workflow_run.actor.login }}' '${{ github.event.workflow_run.head_sha }}'
           printf 'BASE_SCRIPT_SHA256='; sha256sum scripts/verify.sh | cut -d' ' -f1
           bash scripts/verify.sh
       - name: Download only fixed-name lower artifact as control
@@ -43,10 +48,25 @@ jobs:
           merge-multiple: false
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ github.event.workflow_run.id }}
-      - name: Check default path script result
+      - name: Generate consumer-only synthetic canary
+        id: canary
         shell: bash
+        run: |
+          value="$(openssl rand -hex 32)"
+          printf 'CANARY_SHA256=%s\n' "$(printf '%s' "$value" | sha256sum | cut -d' ' -f1)"
+          echo "::add-mask::$value"
+          printf 'value=%s\n' "$value" >> "$GITHUB_OUTPUT"
+      - name: Execute only checked-out trusted path
+        shell: bash
+        env:
+          H019_SYNTHETIC_CANARY: ${{ steps.canary.outputs.value }}
+          H019_WRITE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           printf 'FINAL_SCRIPT_SHA256='; sha256sum scripts/verify.sh | cut -d' ' -f1
           bash scripts/verify.sh
-          test ! -e proof/receiver-boolean.txt
-          printf 'DEFAULT_PATH_CONTROL=completed\n'
+      - name: Upload synthetic receipt
+        uses: actions/upload-artifact@v4
+        with:
+          name: h019-outsider-synthetic-receipt
+          path: proof/receiver-canary.txt
+          if-no-files-found: error
