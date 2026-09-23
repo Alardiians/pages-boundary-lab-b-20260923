@@ -1,0 +1,44 @@
+name: Owned release asset cross-repo ACL probe
+on:
+  workflow_dispatch:
+
+# This token can read only the owned public source repository. The target asset
+# is a synthetic canary in a distinct owned private repository.
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test three bounded GitHub API reads
+        uses: actions/github-script@v8
+        env:
+          SOURCE_TOKEN: ${{ github.token }}
+        with:
+          script: |
+            const crypto = require('node:crypto');
+            const api = 'https://api.github.com';
+            const cases = [
+              {label: 'own-public-repo-control', path: '/repos/Alardiians/pages-boundary-lab-b-20260923', accept: 'application/vnd.github+json'},
+              {label: 'private-asset-correct-path', path: '/repos/Alardiians/copilot-space-acl-canary-20260923/releases/assets/584064379', accept: 'application/octet-stream'},
+              {label: 'private-asset-public-path-alias', path: '/repos/Alardiians/pages-boundary-lab-b-20260923/releases/assets/584064379', accept: 'application/octet-stream'}
+            ];
+            for (const item of cases) {
+              const response = await fetch(api + item.path, {
+                headers: {
+                  'Accept': item.accept,
+                  'Authorization': 'Bearer ' + process.env.SOURCE_TOKEN,
+                  'X-GitHub-Api-Version': '2026-03-10'
+                },
+                redirect: 'manual'
+              });
+              core.info(item.label + ' STATUS=' + response.status);
+              core.info(item.label + ' CONTENT_TYPE=' + (response.headers.get('content-type') || 'none'));
+              core.info(item.label + ' HAS_LOCATION=' + Boolean(response.headers.get('location')));
+              if (response.status === 200 && (response.headers.get('content-type') || '').includes('octet-stream')) {
+                const bytes = Buffer.from(await response.arrayBuffer());
+                core.info(item.label + ' ARCHIVE_BYTES=' + bytes.length);
+                core.info(item.label + ' ARCHIVE_SHA256=' + crypto.createHash('sha256').update(bytes).digest('hex'));
+              }
+            }
