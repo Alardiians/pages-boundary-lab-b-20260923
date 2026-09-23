@@ -1,0 +1,40 @@
+name: Owned PR dot artifact producer
+
+on:
+  pull_request:
+    types: [opened, synchronize, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  lower:
+    if: ${{ github.event.pull_request.title == '.' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out PR merge commit as untrusted data
+        uses: actions/checkout@v4
+      - name: Stage only PR-owned inert file
+        shell: bash
+        env:
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PR_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        run: |
+          printf 'PR_HEAD_SHA=%s\nPR_HEAD_REPO=%s\n' "$PR_HEAD_SHA" "$PR_HEAD_REPO"
+          test -f payload/scripts/verify.sh
+          mkdir -p staged/scripts
+          cp payload/scripts/verify.sh staged/scripts/verify.sh
+          printf 'PR_FILE_SHA256='; sha256sum staged/scripts/verify.sh | cut -d' ' -f1
+          printf 'DECLARED_LOWER_ARTIFACT=UNTRUSTED\n' > declared.txt
+      - name: Upload PR-title-named artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ github.event.pull_request.title }}
+          path: staged
+          if-no-files-found: error
+      - name: Upload declared fixed-name lower artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: UNTRUSTED
+          path: declared.txt
+          if-no-files-found: error
